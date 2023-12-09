@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN" style="height: 100%">
+
+<head>
+  <meta charset="utf-8">
+</head>
+
+<body>
+  <div id="container" style="height: 1310px"></div>
+  <style>
+    body {
+      width: 100%;
+      margin: 0;
+      box-shadow: inset 0 0 6px 0px #8e8e8e;
+    }
+    #container {
+      background-image:linear-gradient(0deg,#cfd9df 0%, #e2ebf0 100%);
+    }
+  </style>
+  <script src="./echarts.min.js"></script>
+  <script src="./dat.gui.min.js"></script>
+
+  <script src="./配置.txt" type="text/javascript"></script>
+  <script type="text/javascript">
+    var dom = document.getElementById('container');
+    var myChart = echarts.init(dom);
+    var app = {};
+    var chart_option;
+
+    if (typeof CONFIG === "undefined") {
+      alert("配置文件不存在！");
+      throw "配置文件不存在！";
+    }
+
+    const { rawTitle, rawData, NS_SELF, NS_PRE,
+        c_min, c_max, TRANS } = CONFIG;
+
+    // 转译
+    var trLang = "English";
+    function Tr(text) {
+      TRANS[trLang] ??= "English";
+      return TRANS[trLang][text] ?? text;
+    }
+
+    class DataLoader {
+      // matrix: [[z, z, z ...], [z, z, z ...] ...]
+      static matrix = null;
+      static size = 0;
+
+      // 额外映射
+      static mapper(num) {
+        return 100 * Math.log(num + 1) / 872 * 1000;
+      }
+
+      // 从原始数据（稀疏矩阵）加载
+      static fromRawData(raw, data_n) {
+        if (data_n == undefined || data_n <= 0)
+          throw "调用 DataLoader.fromRawData 时需要给出矩阵边长（正整数）";
+        let mapper = DataLoader.mapper;
+        let mat = Array.from({ length: data_n }, () => Array(data_n).fill(0));
+        rawData.forEach(i => mat[i[0]][i[1]] = mapper(i[2]));
+        DataLoader.size = data_n;
+        DataLoader.matrix = mat;
+      }
+
+      // grid : [[x, y, z], [x, y, z], [x, y, z] ...]
+      static _buildGrid() {
+        let data_n = DataLoader.size;
+        let mat = DataLoader.matrix;
+        return Array.from({ length: data_n * data_n }, (_, idx) => {
+          const i = Math.floor(idx / data_n);
+          const j = idx % data_n;
+          return [i, j, mat[i][j]];
+        });
+      }
+
+      // 构建紧致网格，可以忽略某些行和列
+      static buildCompactGrid(ignores = new Set()) {
+        if (ignores.length == 0) return DataLoader._buildGrid(mat);
+        // 算法开始
+        let mat = DataLoader.matrix;
+        let data_n = DataLoader.size;
+        const new_n = ignores.length;
+        const grid = Array.from({ length: new_n * new_n });
+        let ptr = 0;
+        for (let r = 0, rr = 0; rr < data_n; rr++) {
+          if (ignores.has(rawTitle[rr])) continue;
+          for (let c = 0, cc = 0; cc < data_n; cc++) {
+            if (ignores.has(rawTitle[cc])) continue;
+            grid[ptr++] = [r, c, mat[rr][cc]];
+            c++
+          }
+          r++;
+        }
+        return grid;
+      }
+    }
+
+    class IgnoreNames {
+      static names = new Set();
+
+      static add(names) {
+        names.forEach(i => IgnoreNames.names.add(i));
+        IgnoreNames.update();
+      }
+
+      static remove(names) {
+        names.forEach(i => IgnoreNames.names.delete(i));
+        IgnoreNames.update();
+      }
+
+      static toggle(names, state) {
+        if (state) IgnoreNames.add(names);
+        else IgnoreNames.remove(names);
+      }
+
+      static update() {
+        let names = IgnoreNames.names;
+        chart_option.series[0].data = DataLoader.buildCompactGrid(names);
+        chart_option.xAxis.data = rawTitle.filter(i => !names.has(i));
+        chart_option.yAxis.data = chart_option.xAxis.data;
+        myChart.setOption(chart_option)
+      }
+    }
+
+    var chart_option = {
+      tooltip: {
+        position: 'top',
+        axisPointer: {
+          type: 'cross',
+        },
+        formatter: function (p) {
+          // 数据提示框
+          let dict = chart_option.xAxis.data;
+          if (p.data[0] != p.data[1])
+            rel = `${Tr(dict[p.data[1]])} ~ ${Tr(dict[p.data[0]])}`;
+          else
+            rel = `${Tr(dict[p.data[0]])} ~ <span style='font-weight:bold'>Others</span>`;
+          return `${rel}<hr/>${p.marker} 相对热度：<span style='font-weight:bold; float:right'>${p.data[2].toFixed(0)}</span>`;
+        }
+      },
+      grid: {
+        height: '90%',
+        top: '4%',
+      },
+      xAxis: {
+        type: 'category',
+        data: null,
+      },
+      yAxis: {
+        type: 'category',
+        data: null,
+        position: 'right'
+      },
+      visualMap: {
+        min: c_min,
+        max: c_max,
+        calculable: true,
+        orient: 'vertical',
+        itemHeight: 380,
+        left: '3%',
+        bottom: '10%',
+        inRange: {
+          color: ['#ffffbf', '#fee090', '#fdae61', '#f46d43', '#d73027', '#a50026']
+        }
+      },
+      series: [
+        {
+          name: '相对热度',
+          type: 'heatmap',
+          data: null,
+          emphasis: {
+            itemStyle: {
+              borderColor: '#333',
+              borderWidth: 0,
+              shadowBlur: 1,
+              shadowColor: 'rgba(0, 0, 0, 0.8)'
+            }
+          },
+          progressive: 1000,
+          animation: false
+        }
+      ]
+    };
+
+    function init() {
+      DataLoader.fromRawData(rawData, rawTitle.length);
+      // IgnoreNames.add 会自动刷新并展示数据
+      IgnoreNames.add([...NS_SELF, ...NS_PRE]);
+      // 设置表格大小
+      myChart.resize({
+        width: 1513,
+        height: 1310
+      });
+    }
+
+    init();
+
+  </script>
+  <script>
+    var options = {
+      HIGH_CON: false,
+      HIDE_SELF: true,
+      HIDE_PRE: true,
+      resize: () => { myChart.resize({ width: 'auto', height: 'auto' }) },
+      LANG: trLang,
+    };
+
+
+    (function () {
+      let gui = new dat.GUI();
+      gui.domElement.style = 'position:absolute;top:10px;left:10px;'
+      let f = gui.addFolder('设置');
+
+      f.add(options, 'resize').name('重设图标长宽（刷新）');
+
+      f.add(options, 'HIGH_CON').name('高对比度选区').onChange((b) => {
+        chart_option.series[0].emphasis.itemStyle.borderWidth = b;
+        myChart.setOption(chart_option)
+      });
+
+      f.add(options, 'HIDE_SELF').name('# 隐藏开拓者').onChange((b) => {
+        IgnoreNames.toggle(NS_SELF, b);
+      });
+
+      f.add(options, 'HIDE_PRE').name('# 隐藏前瞻角色').onChange((b) => {
+        IgnoreNames.toggle(NS_PRE, b);
+      });
+
+      f.add(options, 'LANG', ['English', '简体中文', '必应中文']).name('人名转译')
+        .onChange((opt) => { trLang = opt; });
+
+      f.open();
+    })();
+
+  </script>
+</body>
+
+</html>
