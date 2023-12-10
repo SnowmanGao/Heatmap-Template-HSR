@@ -6,6 +6,7 @@
 </head>
 
 <body>
+  <div id="warn" style="font-size:32px">请使用电脑解压后打开</div>
   <div id="container" style="height: 1310px"></div>
   <style>
     body {
@@ -19,13 +20,13 @@
   </style>
   <script src="./echarts.min.js"></script>
   <script src="./dat.gui.min.js"></script>
-
   <script src="./配置.txt" type="text/javascript"></script>
   <script type="text/javascript">
     var dom = document.getElementById('container');
     var myChart = echarts.init(dom);
     var app = {};
     var chart_option;
+    document.querySelector('#warn').innerHTML = '';
 
     if (typeof CONFIG === "undefined") {
       alert("配置文件不存在！");
